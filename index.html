@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>4-Quadrant Multi-Element Lens Studio</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #060606;
+            color: #e0e0e0;
+            margin: 0;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 { color: #fff; margin-bottom: 5px; font-weight: 700; font-size: 1.6rem; }
+        p { color: #888; margin-top: 0; margin-bottom: 15px; font-size: 0.85rem; }
+        .workspace {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            max-width: 1240px;
+            width: 100%;
+            align-items: center;
+        }
+        .canvas-card {
+            background-color: #0f0f0f;
+            border-radius: 12px;
+            padding: 12px;
+            border: 1px solid #222;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+            width: 100%;
+            box-sizing: border-box;
+        }
+        canvas {
+            background-color: #050505;
+            display: block;
+            border-radius: 6px;
+            width: 100%;
+            height: auto;
+        }
+        .controls-footer {
+            background-color: #0f0f0f;
+            border-radius: 12px;
+            padding: 15px;
+            border: 1px solid #222;
+            width: 100%;
+            box-sizing: border-box;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+        }
+        .control-group { display: flex; flex-direction: column; gap: 4px; }
+        label {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #aaa;
+            display: flex;
+            justify-content: space-between;
+        }
+        label span { color: #4ade80; font-family: monospace; }
+        select {
+            background: #1a1a1a;
+            color: #fff;
+            border: 1px solid #333;
+            padding: 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.85rem;
+        }
+        input[type="range"] { width: 100%; accent-color: #4ade80; background: #222; height: 4px; border-radius: 2px; }
+        .telemetry-bar {
+            grid-column: 1 / -1;
+            background: #0b160f;
+            border-left: 4px solid #4ade80;
+            border-radius: 4px;
+            padding: 10px;
+            font-size: 0.75rem;
+            color: #a7f3d0;
+            font-family: monospace;
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>4-Quadrant Multi-Element Lens Studio</h1>
+    <p>Switch lens profiles to inspect internal elements, precise millimeter spacing metrics, and real-time ray tracing curves.</p>
+
+    <div class="workspace">
+        <div class="canvas-card">
+            <canvas id="quadCanvas" width="1200" height="560"></canvas>
+        </div>
+
+        <div class="controls-footer">
+            <div class="control-group">
+                <label>Lens Profile Select</label>
+                <select id="lensPreset" onchange="handlePresetChange()">
+                    <option value="14">14mm f/2.8 Retrofocus Ultra-Wide</option>
+                    <option value="35">35mm f/1.4 Wide Storyteller</option>
+                    <option value="50">50mm f/1.8 Double-Gauss Standard</option>
+                    <option value="85" selected>85mm f/1.4 Telephoto Portrait Prime</option>
+                    <option value="135">135mm f/2.0 Telephoto Isolator</option>
+                    <option value="400">400mm f/4.0 Super-Telephoto Monster</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label for="focalLength">Focal Length: <span id="focalTxt">85mm</span></label>
+                <input type="range" id="focalLength" min="14" max="400" value="85">
+            </div>
+
+            <div class="control-group">
+                <label for="fStop">Aperture Size: <span id="fStopTxt">f/1.4</span></label>
+                <input type="range" id="fStop" min="1.2" max="22" step="0.1" value="1.4">
+            </div>
+
+            <div class="control-group">
+                <label for="objectDist">Subject Distance: <span id="objDistTxt">2.0m</span></label>
+                <input type="range" id="objectDist" min="0.5" max="9.0" step="0.1" value="2.0">
+            </div>
+
+            <div class="control-group">
+                <label for="focusDist">Focus Ring Distance: <span id="focusTxt">2.0m</span></label>
+                <input type="range" id="focusDist" min="0.5" max="9.0" step="0.1" value="2.0">
+            </div>
+
+            <div class="telemetry-bar" id="telemetryDisplay">
+                Loading deep layout tracking metrics...
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('quadCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // 3D View rotation states
+        let cameraAngleX = 0.25, cameraAngleY = -0.55;
+        let isDragging = false, previousMouseX = 0, previousMouseY = 0;
+
+        // Interactive parameters
+        let focalLength = 85, fStop = 1.4, subjectDistance = 2.0, focusDistance = 2.0;
+
+        // Database storing the physical internal layout configurations of different lenses
+        const lensSchematics = {
+            14: {
+                name: "Retrofocus Ultra-Wide",
+                elements: [
+                    { type: 'aspheric-convex', x: 80, h: 75, thickness: 8, label: "Dome Front" },
+                    { type: 'concave', x: 130, h: 50, thickness: 4, label: "Diverging" },
+                    { type: 'aperture', x: 200 },
+                    { type: 'convex', x: 260, h: 45, thickness: 12, label: "Rear Group" }
+                ],
+                gaps: [50, 70, 60] // physical mm distances between element boundaries
+            },
+            35: {
+                name: "Wide Prime",
+                elements: [
+                    { type: 'convex', x: 90, h: 60, thickness: 10, label: "Front Element" },
+                    { type: 'concave', x: 140, h: 45, thickness: 5, label: "Corrector" },
+                    { type: 'aperture', x: 190 },
+                    { type: 'convex', x: 240, h: 50, thickness: 8, label: "Focus Group" }
+                ],
+                gaps: [50, 50, 50]
+            },
+            50: {
+                name: "Double-Gauss Standard",
+                elements: [
+                    { type: 'convex', x: 110, h: 50, thickness: 12, label: "Compounding Element" },
+                    { type: 'aperture', x: 175 },
+                    { type: 'concave', x: 200, h: 42, thickness: 6, label: "Inner Gauss" },
+                    { type: 'convex', x: 250, h: 48, thickness: 10, label: "Rear Element" }
+                ],
+                gaps: [65, 25, 50]
+            },
+            85: {
+                name: "Portrait Tele-Prime",
+                elements: [
+                    { type: 'convex', x: 70, h: 65, thickness: 14, label: "Large Collector" },
+                    { type: 'convex', x: 120, h: 60, thickness: 10, label: "Mid Element" },
+                    { type: 'aperture', x: 185 },
+                    { type: 'concave', x: 230, h: 50, thickness: 6, label: "Focus Element" }
+                ],
+                gaps: [50, 65, 45]
+            },
+            135: {
+                name: "Medium Telephoto Prime",
+                elements: [
+                    { type: 'convex', x: 60, h: 70, thickness: 16, label: "Front Tele Group" },
+                    { type: 'aperture', x: 180 },
+                    { type: 'convex', x: 210, h: 45, thickness: 8, label: "Focus Guide" },
+                    { type: 'concave', x: 270, h: 40, thickness: 5, label: "Field Flattener" }
+                ],
+                gaps: [120, 30, 60]
+            },
+            400: {
+                name: "Super-Telephoto Monster",
+                elements: [
+                    { type: 'convex', x: 50, h: 85, thickness: 22, label: "Massive Objective" },
+                    { type: 'convex', x: 90, h: 80, thickness: 14, label: "Secondary Element" },
+                    { type: 'aperture', x: 260 },
+                    { type: 'concave', x: 300, h: 35, thickness: 6, label: "Telephoto Compressor" }
+                ],
+                gaps: [40, 170, 40]
+            }
+        };
+
+        // Standard Scene Coordinates for 3D Viewport Rendering (scaled in meters)
+        const sceneTargets = [
+            { id: 'mannequin', type: 'subject', x: 0, y: 0, z: 2.0, color: '#ff4757' },
+            { id: 'tree', type: 'tree', x: -1.1, y: -0.15, z: 4.5, color: '#2ed573' },
+            { type: 'light', x: -0.7, y: -0.8, z: 6.5, color: 'rgba(255, 159, 26, 0.9)' },
+            { type: 'light', x: 0.8, y: -0.5, z: 8.0, color: 'rgba(30, 144, 255, 0.9)' },
+            { type: 'light', x: 0.2, y: -1.0, z: 5.5, color: 'rgba(255, 107, 129, 0.9)' }
+        ];
+
+        // Interaction Event Listeners
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            // Limit orbit controls strictly to the Top-Right quadrant footprint
+            if (mouseX > 600 && mouseY < 280) {
+                isDragging = true;
+                previousMouseX = e.clientX;
+                previousMouseY = e.clientY;
+            }
+        });
+
+        window.addEventListener('mouseup', () => { isDragging = false; });
+        canvas.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                cameraAngleY += (e.clientX - previousMouseX) * 0.01;
+                cameraAngleX += (e.clientY - previousMouseY) * 0.01;
+                cameraAngleX = Math.max(-Math.PI/3, Math.min(Math.PI/3, cameraAngleX));
+                previousMouseX = e.clientX; previousMouseY = e.clientY;
+                render();
+            }
+        });
+
+        ['focalLength', 'fStop', 'objectDist', 'focusDist'].forEach(id => {
+            document.getElementById(id).addEventListener('input', () => {
+                document.getElementById('lensPreset').value = 'custom';
+                readUI(); render();
+            });
+        });
+
+        function handlePresetChange() {
+            const val = document.getElementById('lensPreset').value;
+            if (val === 'custom') return;
+            const f = parseInt(val);
+            if(f === 14) { setUIValues(14, 2.8, 1.0, 1.0); }
+            else if(f === 35) { setUIValues(35, 1.4, 1.5, 1.5); }
+            else if(f === 50) { setUIValues(50, 1.8, 2.0, 2.0); }
+            else if(f === 85) { setUIValues(85, 1.4, 2.0, 2.0); }
+            else if(f === 135) { setUIValues(135, 2.0, 3.5, 3.5); }
+            else if(f === 400) { setUIValues(400, 4.0, 6.5, 6.5); }
+            readUI(); render();
+        }
+
+        function setUIValues(f, s, sd, fd) {
+            document.getElementById('focalLength').value = f;
+            document.getElementById('fStop').value = s;
+            document.getElementById('objectDist').value = sd;
+            document.getElementById('focusDist').value = fd;
+        }
+
+        function readUI() {
+            focalLength = parseFloat(document.getElementById('focalLength').value);
+            fStop = parseFloat(document.getElementById('fStop').value);
+            subjectDistance = parseFloat(document.getElementById('objectDist').value);
+            focusDistance = parseFloat(document.getElementById('focusDist').value);
+
+            document.getElementById('focalTxt').innerText = focalLength + "mm";
+            document.getElementById('fStopTxt').innerText = "f/" + fStop.toFixed(1);
+            document.getElementById('objDistTxt').innerText = subjectDistance.toFixed(1) + "m";
+            document.getElementById('focusTxt').innerText = focusDistance.toFixed(1) + "m";
+            
+            sceneTargets.forEach(t => { if (t.id === 'mannequin') t.z = subjectDistance; });
+        }
+
+        function project3D(x, y, z, cx, cy) {
+            let cosY = Math.cos(cameraAngleY), sinY = Math.sin(cameraAngleY);
+            let x1 = x * 100 - z * 100 * sinY; // standard geometric scaling metrics
+            let z1 = x * 100 * sinY + z * 100 * cosY;
+            let cosX = Math.cos(cameraAngleX), sinX = Math.sin(cameraAngleX);
+            let y2 = y * 100 * cosX - z1 * sinX;
+            let z2 = y * 100 * sinX + z1 * cosX;
+            let scale = 250 / (z2 + 400);
+            return { x: cx + x1 * scale, y: cy + y2 * scale, visible: true };
+        }
+
+        function render() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Establish Grid Quadrant Splitting boundaries
+            ctx.strokeStyle = '#222'; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(600, 0); ctx.lineTo(600, 560); ctx.moveTo(0, 280); ctx.lineTo(1200, 280); ctx.stroke();
+
+            // Calculate basic optics formulas variables
+            const fMeters = focalLength / 1000;
+            const dActualImagePlane = (fMeters * subjectDistance) / (subjectDistance - fMeters);
+            const dSensorPlane = (fMeters * focusDistance) / (focusDistance - fMeters);
+            const exposurePercent = Math.min(250, Math.round(((1.4 * 1.4) / (fStop * fStop)) * 100));
+
+            // Sync text readouts display fields
+            document.getElementById('telemetryDisplay').innerHTML = `
+                <span>VIEWPORT METRICS: Lens Blueprint: ${focalLength}mm f/${fStop.toFixed(1)}</span>
+                <span>Convergence Point: ${dActualImagePlane.toFixed(3)}m</span>
+                <span>Focal Plane Calibration Delta: ${Math.abs(dActualImagePlane - dSensorPlane).toFixed(4)}m</span>
+            `;
+
+            // Identify current matching profile structural layout configuration
+            // Fallback gracefully to standard 50mm layout template if using custom sliders configurations
+            const currentPresetKey = lensSchematics[focalLength] ? focalLength : 50;
+            const blueprint = lensSchematics[currentPresetKey];
+
+            // =========================================================
+            // QUADRANT 1 (TOP-LEFT): INTERNAL MULTI-ELEMENT GLASS TRACKING
+            // =========================================================
+            ctx.save();
+            const q1X = 0, q1Y = 0, q1W = 600, q1H = 280;
+            ctx.fillStyle = '#0a0a0a'; ctx.fillRect(q1X, q1Y, q1W, q1H);
+            
+            // Draw Sub-heading Title
+            ctx.fillStyle = '#888'; ctx.font = 'bold 11px sans-serif';
+            ctx.fillText(`LENS STRUCTURAL ELEMENTS: ${blueprint.name.toUpperCase()}`, q1X + 15, q1Y + 22);
+
+            const axisY = q1Y + q1H / 2 - 10;
+            // Draw internal barrel reference axis line
+            ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+            ctx.beginPath(); ctx.moveTo(q1X + 10, axisY); ctx.lineTo(q1X + 580, axisY); ctx.stroke(); ctx.setLineDash([]);
+
+            // Draw outer metal lens shell frame chassis reference envelope
+            ctx.strokeStyle = '#222'; ctx.lineWidth = 1.5;
+            ctx.strokeRect(q1X + 35, axisY - 90, 360, 180);
+            ctx.fillStyle = '#111'; ctx.fillRect(q1X + 395, axisY - 60, 35, 120); // mount adapter ring
+            
+            // Draw Digital Sensor Plane representation bar
+            const blueprintSensorX = q1X + 480;
+            ctx.fillStyle = '#143a1e'; ctx.fillRect(blueprintSensorX, axisY - 50, 6, 100);
+            ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 1.5; ctx.strokeRect(blueprintSensorX, axisY - 50, 6, 100);
+            ctx.fillStyle = '#22c55e'; ctx.font = '9px monospace'; ctx.fillText("SENSOR", blueprintSensorX - 12, axisY - 58);
+
+            // Dynamically Render Glass Elements and Label Spacing dimensions
+            blueprint.elements.forEach((el, index) => {
+                const elX = q1X + 40 + el.x;
+                
+                if (el.type === 'aperture') {
+                    // Draw Iris blade pointers profile markers
+                    const openR = Math.max(6, (focalLength / fStop) * 0.4);
+                    ctx.fillStyle = '#ef4444';
+                    ctx.fillRect(elX, axisY - 90, 3, 90 - openR);
+                    ctx.fillRect(elX, axisY + openR, 3, 90 - openR);
+                    ctx.fillStyle = '#ef4444'; ctx.font = '9px sans-serif';
+                    ctx.fillText("IRIS", elX - 8, axisY - 94);
+                } else {
+                    // Draw Shaped Glass Profiles
+                    ctx.fillStyle = 'rgba(14, 165, 233, 0.12)';
+                    ctx.strokeStyle = 'rgba(56, 189, 248, 0.6)'; ctx.lineWidth = 1.5;
+                    
+                    ctx.beginPath();
+                    if (el.type.includes('convex')) {
+                        ctx.arc(elX - el.thickness, axisY, el.h, -Math.PI/4, Math.PI/4);
+                        ctx.arc(elX + el.thickness, axisY, el.h, 3*Math.PI/4, 5*Math.PI/4);
+                    } else if (el.type === 'concave') {
+                        ctx.arc(elX - el.thickness - 20, axisY, el.h, 3*Math.PI/4, 5*Math.PI/4);
+                        ctx.arc(elX + el.thickness + 20, axisY, el.h, -Math.PI/4, Math.PI/4);
+                    }
+                    ctx.closePath(); ctx.fill(); ctx.stroke();
+
+                    // Text labels annotations
+                    ctx.fillStyle = '#666'; ctx.font = '9px sans-serif';
+                    ctx.fillText(el.label, elX - ctx.measureText(el.label).width/2, axisY + el.h + 14);
+                }
+
+                // Render physical mm distance gaps markers lines between adjacent array slots
+                if (index < blueprint.elements.length - 1) {
+                    const nextEl = blueprint.elements[index + 1];
+                    const startX = elX + (el.thickness || 0);
+                    const endX = q1X + 40 + nextEl.x - (nextEl.thickness || 0);
+                    const gapMm = blueprint.gaps[index];
+
+                    if (endX > startX) {
+                        ctx.strokeStyle = 'rgba(74, 222, 128, 0.2)'; ctx.lineWidth = 1;
+                        const lineY = axisY - 70 + (index * 12);
+                        ctx.beginPath(); ctx.moveTo(startX, lineY); ctx.lineTo(endX, lineY); ctx.stroke();
+                        // Dimension arrows pointers boundaries
+                        ctx.beginPath(); ctx.moveTo(startX, lineY-3); ctx.lineTo(startX, lineY+3); ctx.moveTo(endX, lineY-3); ctx.lineTo(endX, lineY+3); ctx.stroke();
+                        
+                        ctx.fillStyle = '#4ade80'; ctx.font = '8px monospace';
+                        ctx.fillText(`${gapMm}mm`, startX + (endX - startX)/2 - 12, lineY - 4);
+                    }
+                }
+            });
+
+            // Perform Multi Stage Parameter Ray Refraction Tracing curves over layout elements
+            const traceRays = 3;
+            for(let r = 0; r < traceRays; r++) {
+                ctx.strokeStyle = 'rgba(234, 179, 8, 0.45)'; ctx.lineWidth = 1;
+                let currentY = axisY - 40 + (r * 40);
+                let currentX = q1X + 10;
+                
+                ctx.beginPath(); ctx.moveTo(currentX, currentY);
+                
+                // Track path coordinates mapping bending curves index steps sequentially
+                blueprint.elements.forEach(el => {
+                    const elX = q1X + 40 + el.x;
+                    ctx.lineTo(elX, currentY);
+                    if (el.type === 'convex') currentY += (axisY - currentY) * 0.18;
+                    if (el.type === 'concave') currentY -= (axisY - currentY) * 0.12;
+                });
+                
+                ctx.lineTo(blueprintSensorX, currentY); ctx.stroke();
+            }
+            ctx.restore();
+
+
+            // =========================================================
+            // QUADRANT 2 (TOP-RIGHT): INTERACTIVE 3D SCHEMATIC PLATFORM
+            // =========================================================
+            ctx.save();
+            const q2X = 600, q2Y = 0;
+            ctx.fillStyle = '#0f0f0f'; ctx.fillRect(q2X, q2Y, 600, 280);
+            
+            ctx.fillStyle = '#888'; ctx.font = 'bold 11px sans-serif';
+            ctx.fillText("3D OPTICAL BENCH PROFILE (DRAG TO ORBIT)", q2X + 15, q2Y + 22);
+
+            // Draw Ground metric meter tracking tick grid layout maps
+            for(let m=0; m<=8; m++) {
+                let pL = project3D(-1.2, 0.5, m, q2X + 300, q2Y + 140);
+                let pR = project3D(1.2, 0.5, m, q2X + 300, q2Y + 140);
+                ctx.strokeStyle = (m === Math.round(focusDistance)) ? 'rgba(74, 222, 128, 0.25)' : '#1e1e1e';
+                ctx.beginPath(); ctx.moveTo(pL.x, pL.y); ctx.lineTo(pR.x, pR.y); ctx.stroke();
+            }
+
+            // Draw Target Assets down path configurations
+            sceneTargets.forEach(obj => {
+                let pB = project3D(obj.x, 0.5, obj.z, q2X + 300, q2Y + 140);
+                let pT = project3D(obj.x, -0.3, obj.z, q2X + 300, q2Y + 140);
+                ctx.strokeStyle = obj.color; ctx.lineWidth = obj.type==='subject'? 3:1;
+                ctx.beginPath(); ctx.moveTo(pB.x, pB.y); ctx.lineTo(pT.x, pT.y); ctx.stroke();
+            });
+            ctx.restore();
+
+
+            // =========================================================
+            // QUADRANT 3 (BOTTOM-LEFT): INTERNAL MECHANICAL IRIS BLADES
+            // =========================================================
+            ctx.save();
+            const q3X = 0, q3Y = 280, q3W = 600, q3H = 280;
+            ctx.fillStyle = '#0b0b0b'; ctx.fillRect(q3X, q3Y, q3W, q3H);
+            
+            ctx.fillStyle = '#888'; ctx.font = 'bold 11px sans-serif';
+            ctx.fillText("INTERNAL LENS VIEW (MECHANICAL APERTURE IRIS)", q3X + 15, q3Y + 22);
+
+            const cx3 = q3X + q3W/2, cy3 = q3Y + q3H/2;
+            const outerR = 85, maxApertureR = 75, minApertureR = 5;
+            const logT = (Math.log(fStop) - Math.log(1.2)) / (Math.log(22) - Math.log(1.2));
+            const calculatedIrisRadius = maxApertureR - logT * (maxApertureR - minApertureR);
+
+            // Draw outer cylindrical lens ring body chassis boundary envelope
+            ctx.strokeStyle = '#222'; ctx.lineWidth = 6;
+            ctx.beginPath(); ctx.arc(cx3, cy3, outerR, 0, Math.PI*2); ctx.stroke();
+            ctx.strokeStyle = '#0ea5e9'; ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.arc(cx3, cy3, outerR - 3, 0, Math.PI*2); ctx.stroke();
+
+            // Intersecting Multiblade Aperture Ring layout mapping profile configurations
+            const bladeCount = 7;
+            ctx.fillStyle = '#121212'; ctx.strokeStyle = '#262626'; ctx.lineWidth = 2;
+            for(let i=0; i<bladeCount; i++) {
+                let a = (i / bladeCount) * Math.PI*2;
+                let na = ((i+1) / bladeCount) * Math.PI*2;
+                let ox = cx3 + Math.cos(a) * outerR, oy = cy3 + Math.sin(a) * outerR;
+                let ix = cx3 + Math.cos(a + 0.35) * calculatedIrisRadius, iy = cy3 + Math.sin(a + 0.35) * calculatedIrisRadius;
+                let nix = cx3 + Math.cos(na + 0.35) * calculatedIrisRadius, niy = cy3 + Math.sin(na + 0.35) * calculatedIrisRadius;
+
+                ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ix, iy); ctx.lineTo(nix, niy);
+                ctx.lineTo(cx3 + Math.cos(na) * outerR, cy3 + Math.sin(na) * outerR);
+                ctx.closePath(); ctx.fill(); ctx.stroke();
+            }
+            ctx.restore();
+
+
+            // =========================================================
+            // QUADRANT 4 (BOTTOM-RIGHT): SHRUNK HIGH-FIDELITY VIEWFINDER
+            // =========================================================
+            ctx.save();
+            ctx.strokeRect(vX, vY, vW, vH);
+            ctx.beginPath(); ctx.rect(vX, vY, vW, vH); ctx.clip();
+            ctx.fillStyle = '#020202'; ctx.fillRect(vX, vY, vW, vH);
+
+            const zoomFactor = (focalLength / 50) * (2.0 / subjectDistance);
+            const viewCenterX = vX + vW / 2;
+            const sortedScene = [...sceneTargets].sort((a,b) => b.z - a.z);
+
+            sortedScene.forEach(obj => {
+                const dObjImagePlane = (fMeters * obj.z) / (obj.z - fMeters);
+                const blurRadius = Math.abs(dObjImagePlane - dSensorPlane) / dObjImagePlane * (fMeters / fStop) * 16000;
+
+                ctx.save();
+                ctx.filter = `brightness(${exposurePercent}%)`;
+
+                if (obj.type === 'light') {
+                    ctx.globalCompositeOperation = 'screen';
+                    const bx = viewCenterX + (obj.x * 120 * (focalLength / 50));
+                    const by = vY + vH/2 + (obj.y * 110 * (focalLength / 50));
+                    const bokehRadius = Math.max(2.5, blurRadius * 1.4);
+
+                    let grad = ctx.createRadialGradient(bx, by, bokehRadius * 0.1, bx, by, bokehRadius);
+                    grad.addColorStop(0, '#ffffff'); grad.addColorStop(0.2, obj.color);
+                    grad.addColorStop(0.9, obj.color); grad.addColorStop(1, 'rgba(0,0,0,0)');
+
+                    ctx.fillStyle = grad;
+                    ctx.beginPath(); ctx.arc(bx, by, bokehRadius, 0, Math.PI*2); ctx.fill();
+
+                } else if (obj.type === 'tree') {
+                    ctx.filter += ` blur(${Math.max(0.2, blurRadius * 0.4)}px)`;
+                    const tx = viewCenterX - 90 * zoomFactor, ty = vY + vH - 15;
+                    const tw = 70 * zoomFactor, th = 190 * zoomFactor;
+
+                    ctx.fillStyle = obj.color;
+                    ctx.beginPath(); ctx.moveTo(tx, ty - th);
+                    ctx.lineTo(tx - tw/2, ty); ctx.lineTo(tx + tw/2, ty); ctx.closePath(); ctx.fill();
+
+                } else if (obj.type === 'subject') {
+                    ctx.filter += ` blur(${Math.max(0.1, blurRadius * 0.4)}px)`;
+                    const sx = viewCenterX, sy = vY + vH/2 + 25, sh = 150 * zoomFactor;
+
+                    ctx.strokeStyle = obj.color; ctx.lineWidth = 3 * zoomFactor; ctx.fillStyle = '#111';
+                    ctx.beginPath(); ctx.arc(sx, sy - sh*0.35, 15 * zoomFactor, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+                    
+                    ctx.beginPath(); ctx.arc(sx, sy, 25 * zoomFactor, 0, Math.PI*2); ctx.stroke();
+                    ctx.lineWidth = 1 * zoomFactor;
+                    ctx.beginPath(); ctx.moveTo(sx - 35*zoomFactor, sy); ctx.lineTo(sx + 35*zoomFactor, sy); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(sx, sy - 35*zoomFactor); ctx.lineTo(sx, sy + 35*zoomFactor); ctx.stroke();
+                }
+                ctx.restore();
+            });
+            ctx.restore();
+        }
+
+        readUI();
+        render();
+    </script>
+</body>
+</html>
